@@ -10,6 +10,7 @@ pygame.init()
 WIDTH = 828
 HEIGHT = 576
 PLAYER_X, PLAYER_Y = 400, 450
+MAX_HEALTH = 5
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Fleater")
 
@@ -34,7 +35,7 @@ player_width, player_height = 100, 100
 player_x, player_y = PLAYER_X, PLAYER_Y
 player_speed = 5
 
-player_health = 5
+player_health = MAX_HEALTH
 heart_width, heart_height = 30, 30
 heart_color = (247, 31, 31)
 
@@ -96,11 +97,41 @@ p_current_frame_index = 0
 p_last_animation_time = 0
 p_animation_interval = 50
 
+# player is hit
+HIT_FLASH_DURATION = 200  # milliseconds
+last_hit_time = 0
+
 # falling things to eat
-object_width, object_height = 30, 30
+object_width, object_height = 75, 75
 falling_objects = []
 object_speed = 3
 spawn_timer = 0
+
+bad_objects_sprite = pygame.image.load("resources/trash.png").convert_alpha()
+good_objects_sprite = pygame.image.load("resources/food.png").convert_alpha()
+star_sprite = pygame.image.load("resources/starcatch.png").convert_alpha()
+
+good_sprites = [
+    good_objects_sprite.subsurface((0, 0, object_width, object_height)),
+    good_objects_sprite.subsurface((object_width, 0, object_width, object_height)),
+    good_objects_sprite.subsurface((object_width * 2, 0, object_width, object_height))
+]
+
+bad_sprites = [
+    bad_objects_sprite.subsurface((0, 0, object_width, object_height)),
+    bad_objects_sprite.subsurface((object_width, 0, object_width, object_height)),
+    bad_objects_sprite.subsurface((object_width * 2, 0, object_width, object_height))
+]
+
+star_sprite_1 = star_sprite.subsurface((0, 0, object_width, object_height))
+star_sprite_2 = star_sprite.subsurface((object_width, 0, object_width, object_height))
+star_sprite_3 = star_sprite.subsurface((object_width * 2, 0, object_width, object_height))
+
+star_sprites = [star_sprite_1, star_sprite_2, star_sprite_3, star_sprite_2]
+
+s_current_frame_index = 0
+s_last_animation_time = 0
+s_animation_interval = 150
 
 # clock
 clock = pygame.time.Clock()
@@ -111,7 +142,7 @@ show_start_screen(screen, WIDTH, HEIGHT)
 # game reset
 def reset_game():
     global player_health, falling_objects, spawn_timer, player_x, player_y
-    player_health = 5
+    player_health = MAX_HEALTH
     falling_objects.clear()
     player_x, player_y = PLAYER_X, PLAYER_Y
 
@@ -132,7 +163,6 @@ while running:
         player_state = "walking_right"
     else:
         player_state = "standing"
-    
     
     # update player animation
     p_current_time = pygame.time.get_ticks()
@@ -163,21 +193,45 @@ while running:
     
     screen.blit(p_current_frame, (player_x, player_y))
     
+    current_hit_time = pygame.time.get_ticks()
+    player_sprite_to_draw = p_current_frame
+    if current_hit_time - last_hit_time < HIT_FLASH_DURATION:
+        tinted_sprite = player_sprite_to_draw.copy()
+        tinted_sprite.fill((255, 0, 0, 100), special_flags=pygame.BLEND_RGBA_MULT)
+        player_sprite_to_draw = tinted_sprite
+        
+    screen.blit(player_sprite_to_draw, (player_x, player_y))
+    
     # draw health
     for i in range(player_health):
         pygame.draw.rect(screen, heart_color, (10 + i * (heart_width + 5), 10, heart_width, heart_height))
+
+    # update star animation
+    current_star_frame_time = pygame.time.get_ticks()
+    if current_star_frame_time - s_last_animation_time > s_animation_interval:
+        s_last_animation_time = current_star_frame_time
+        s_current_frame_index = (s_current_frame_index + 1) % len(star_sprites)
 
     # spawn falling objects
     spawn_timer += 1
     if spawn_timer > 60:
         spawn_timer = 0
         object_x = random.randint(0, WIDTH - object_width) # x value for where object should start; random
-        object_type = random.choice(["bad", "good"])
-        object_color = (200, 50, 50) if object_type == "bad" else (50, 200, 50)
+        object_type = random.choices(["bad", "good", "star"],
+                                    weights = [0.45, 0.45, 0.1],
+                                    k=1)[0]
+        
+        if object_type == "bad":
+            object_sprite = random.choice(bad_sprites)
+        elif object_type == "good":
+            object_sprite = random.choice(good_sprites)
+        elif object_type == "star":
+            object_sprite = star_sprites[s_current_frame_index]
+        
         falling_objects.append({
                                 "rect": pygame.Rect(object_x, 0, object_width, object_height),
                                 "type": object_type,
-                                "color": object_color})
+                                "sprite": object_sprite})
         # 0 is y value, so top of screen
         # object_width and object_height are the size of the object
         # append adds a new object to falling_objects list
@@ -186,7 +240,11 @@ while running:
     remaining_objects = []
     for object in falling_objects[:]:
         object["rect"].y += object_speed
-        pygame.draw.rect(screen, object["color"], object["rect"])
+        
+        if object["type"] == "star":
+            object["sprite"] = star_sprites[s_current_frame_index]
+        
+        screen.blit(object["sprite"], object["rect"])
 
         # check for collisions
         hitbox_offset_x, hitbox_offset_y = 40, 50
@@ -208,10 +266,14 @@ while running:
             elif object["type"] == "bad":
                 print("Caught a bad object!")
                 player_health -= 1
+                last_hit_time = pygame.time.get_ticks()
                 if player_health <= 0:
                     print("Game Over!")
                     show_game_over_screen(screen, WIDTH, HEIGHT)
                     reset_game()
+            elif object["type"] == "star":
+                print("Caught a star!")
+                player_health = min(player_health + 1, MAX_HEALTH) # max health is 5
         elif object["rect"].y > HEIGHT:
             pass
         else:
