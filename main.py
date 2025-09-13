@@ -9,6 +9,7 @@ pygame.init()
 # set up display
 WIDTH = 828
 HEIGHT = 576
+PLAYER_X, PLAYER_Y = 400, 450
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Fleater")
 
@@ -29,14 +30,71 @@ current_bg_frame = bg_1_scaled
 last_switch_time = 0
 
 # player info
-player_width, player_height = 50, 50
-player_x, player_y = 375, 500
+player_width, player_height = 100, 100
+player_x, player_y = PLAYER_X, PLAYER_Y
 player_speed = 5
-player_color = (65, 145, 65)
 
 player_health = 5
 heart_width, heart_height = 30, 30
 heart_color = (247, 31, 31)
+
+player_sprite = pygame.image.load("resources/flea.png").convert_alpha()
+player_frame_width, player_frame_height = 100, 100
+
+p_standing_1_x, p_standing_1_y = player_frame_width, 0
+p_standing_1n_x, p_standing_1n_y = player_frame_width * 2, 0 # head nodded
+p_walking_left_1_x, p_walking_left_1_y = player_frame_width * 3, 0 
+p_walking_left_1n_x, p_walking_left_1n_y = player_frame_width * 4, 0 # head nodded
+p_walking_left_2_x, p_walking_left_2_y = player_frame_width * 5, 0
+p_walking_left_2n_x, p_walking_left_2n_y = player_frame_width * 6, 0 # head nodded
+p_walking_right_1_x, p_walking_right_1_y = player_frame_width * 7, 0
+p_walking_right_1n_x, p_walking_right_1n_y = player_frame_width * 8, 0 # head nodded
+p_walking_right_2_x, p_walking_right_2_y = player_frame_width * 9, 0
+p_walking_right_2n_x, p_walking_right_2n_y = player_frame_width * 10, 0 # head nodded
+
+p_standing = player_sprite.subsurface((p_standing_1_x, p_standing_1_y, player_frame_width, player_frame_height))
+p_standing_nod = player_sprite.subsurface((p_standing_1n_x, p_standing_1n_y, player_frame_width, player_frame_height))
+
+p_walking_left_1 = player_sprite.subsurface((p_walking_left_1_x, p_walking_left_1_y, player_frame_width, player_frame_height))
+p_walking_left_1n = player_sprite.subsurface((p_walking_left_1n_x, p_walking_left_1n_y, player_frame_width, player_frame_height))
+p_walking_left_2 = player_sprite.subsurface((p_walking_left_2_x, p_walking_left_2_y, player_frame_width, player_frame_height))
+p_walking_left_2n = player_sprite.subsurface((p_walking_left_2n_x, p_walking_left_2n_y, player_frame_width, player_frame_height))
+p_walking_right_1 = player_sprite.subsurface((p_walking_right_1_x, p_walking_right_1_y, player_frame_width, player_frame_height))
+p_walking_right_1n = player_sprite.subsurface((p_walking_right_1n_x, p_walking_right_1n_y, player_frame_width, player_frame_height))
+p_walking_right_2 = player_sprite.subsurface((p_walking_right_2_x, p_walking_right_2_y, player_frame_width, player_frame_height))
+p_walking_right_2n = player_sprite.subsurface((p_walking_right_2n_x, p_walking_right_2n_y, player_frame_width, player_frame_height))
+
+# scale sprite
+def scale_sprite(sprite):
+    scale_factor = float(1.2)
+    width = int(sprite.get_width() * scale_factor)
+    height = int(sprite.get_height() * scale_factor)
+    return pygame.transform.scale(sprite, (width, height))
+
+p_standing = scale_sprite(p_standing)
+p_standing_nod = scale_sprite(p_standing_nod)
+p_walking_left_1 = scale_sprite(p_walking_left_1)
+p_walking_left_1n = scale_sprite(p_walking_left_1n)
+p_walking_left_2 = scale_sprite(p_walking_left_2)
+p_walking_left_2n = scale_sprite(p_walking_left_2n)
+p_walking_right_1 = scale_sprite(p_walking_right_1)
+p_walking_right_1n = scale_sprite(p_walking_right_1n)
+p_walking_right_2 = scale_sprite(p_walking_right_2)
+p_walking_right_2n = scale_sprite(p_walking_right_2n)
+
+
+walking_left_frames = [p_walking_left_1, p_walking_left_1, p_walking_left_1n, p_walking_left_1, p_walking_left_1, 
+                       p_walking_left_2, p_walking_left_2, p_walking_left_2n, p_walking_left_2, p_walking_left_2]
+
+walking_right_frames = [p_walking_right_1, p_walking_right_1, p_walking_right_1n, p_walking_right_1, p_walking_right_1, 
+                        p_walking_right_2, p_walking_right_2, p_walking_right_2n, p_walking_right_2, p_walking_right_2,]
+
+standing_frames = [p_standing, p_standing, p_standing_nod, p_standing_nod]
+
+player_state = "standing" # can be "standing", "walking_left", "walking_right"
+p_current_frame_index = 0
+p_last_animation_time = 0
+p_animation_interval = 50
 
 # falling things to eat
 object_width, object_height = 30, 30
@@ -55,7 +113,7 @@ def reset_game():
     global player_health, falling_objects, spawn_timer, player_x, player_y
     player_health = 5
     falling_objects.clear()
-    player_x, player_y = 375, 500
+    player_x, player_y = PLAYER_X, PLAYER_Y
 
 # main game loop
 running = True
@@ -68,8 +126,19 @@ while running:
     keys = pygame.key.get_pressed()
     if keys[pygame.K_LEFT] and player_x > 0:
         player_x -= player_speed
-    if keys[pygame.K_RIGHT] and player_x < WIDTH - player_width:
+        player_state = "walking_left"
+    elif keys[pygame.K_RIGHT] and player_x < WIDTH - player_width:
         player_x += player_speed
+        player_state = "walking_right"
+    else:
+        player_state = "standing"
+    
+    
+    # update player animation
+    p_current_time = pygame.time.get_ticks()
+    if p_current_time - p_last_animation_time > p_animation_interval:
+        p_last_animation_time = p_current_time
+        p_current_frame_index = (p_current_frame_index + 1) % len(walking_left_frames)
 
     # fill the screen with black
     screen.fill((0, 0, 0))
@@ -83,6 +152,16 @@ while running:
         current_bg_frame = bg_2_scaled if current_bg_frame == bg_1_scaled else bg_1_scaled
         
     screen.blit(current_bg_frame, (0, 0))
+    
+    # draw player based on state
+    if player_state == "standing":
+        p_current_frame = standing_frames[p_current_frame_index % len(standing_frames)]
+    elif player_state == "walking_left":
+        p_current_frame = walking_left_frames[p_current_frame_index]
+    elif player_state == "walking_right":
+        p_current_frame = walking_right_frames[p_current_frame_index]
+    
+    screen.blit(p_current_frame, (player_x, player_y))
     
     # draw health
     for i in range(player_health):
@@ -110,7 +189,19 @@ while running:
         pygame.draw.rect(screen, object["color"], object["rect"])
 
         # check for collisions
-        player_rect = pygame.Rect(player_x, player_y, player_width, player_height)
+        hitbox_offset_x, hitbox_offset_y = 40, 50
+        hitbox_width = 40
+        hitbox_height = 20
+
+        player_rect = pygame.Rect(
+            player_x + hitbox_offset_x,
+            player_y + hitbox_offset_y,
+            hitbox_width,
+            hitbox_height
+        )
+        
+        # pygame.draw.rect(screen, (255, 0, 0), player_rect, 2)  # draw player hitbox for debugging
+
         if player_rect.colliderect(object["rect"]):
             if object["type"] == "good":
                 print("Caught a good object!")
@@ -127,9 +218,6 @@ while running:
             remaining_objects.append(object)
     
     falling_objects = remaining_objects
-
-    # player visual
-    pygame.draw.rect(screen, player_color, (player_x, player_y, player_width, player_height))
 
     # update the display
     pygame.display.flip()
