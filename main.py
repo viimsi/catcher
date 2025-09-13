@@ -1,16 +1,25 @@
 import pygame
 import sys
 import random
+import math
 from other_screens import show_start_screen, show_game_over_screen
 
 # init Pygame
 pygame.init()
+pygame.mixer.init()
+
+# sounds
+food_sound = pygame.mixer.Sound("resources/pickupCoin.wav")
+star_sound = pygame.mixer.Sound("resources/powerUp.wav")
+hurt_sound = pygame.mixer.Sound("resources/hitHurt.wav")
+gameover_sound = pygame.mixer.Sound("resources/explosion.wav")
 
 # set up display
 WIDTH = 828
 HEIGHT = 576
-PLAYER_X, PLAYER_Y = 400, 450
+PLAYER_X, PLAYER_Y = 400, 420
 MAX_HEALTH = 5
+FONT = "resources/DigitalDisco.ttf"
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Fleater")
 
@@ -29,6 +38,25 @@ bg_2_scaled = pygame.transform.scale(bg2_frame, (frame_width * 4, frame_height *
 
 current_bg_frame = bg_1_scaled
 last_switch_time = 0
+
+# score
+def load_high_score():
+    try:
+        with open("high_score.txt", "r") as file:
+            return int(file.read().strip())
+    except (FileNotFoundError, ValueError):
+        return 0
+
+def save_high_score(score, high_score):
+    if score > high_score:
+        with open("high_score.txt", "w") as file:
+            file.write(str(score))
+        return score
+    return high_score
+
+score = 0
+score_font = pygame.font.Font(FONT, 36)
+high_score = load_high_score()
 
 # player info
 player_width, player_height = 100, 100
@@ -83,7 +111,6 @@ p_walking_right_1n = scale_sprite(p_walking_right_1n)
 p_walking_right_2 = scale_sprite(p_walking_right_2)
 p_walking_right_2n = scale_sprite(p_walking_right_2n)
 
-
 walking_left_frames = [p_walking_left_1, p_walking_left_1, p_walking_left_1n, p_walking_left_1, p_walking_left_1, 
                        p_walking_left_2, p_walking_left_2, p_walking_left_2n, p_walking_left_2, p_walking_left_2]
 
@@ -101,11 +128,23 @@ p_animation_interval = 50
 HIT_FLASH_DURATION = 200  # milliseconds
 last_hit_time = 0
 
+# player is healed
+HEALED_FLASH_DURATION = 200  # milliseconds
+last_healed_time = 0
+
+# player shadow
+shadow_width = int(player_width * 0.5)
+shadow_height = int(player_height * 0.2)
+shadow_colour = (0, 0, 0, 100)
+
 # falling things to eat
 object_width, object_height = 75, 75
 falling_objects = []
 object_speed = 3
 spawn_timer = 0
+
+speed_increment = 0.0005
+max_speed = 10
 
 bad_objects_sprite = pygame.image.load("resources/trash.png").convert_alpha()
 good_objects_sprite = pygame.image.load("resources/food.png").convert_alpha()
@@ -133,17 +172,43 @@ s_current_frame_index = 0
 s_last_animation_time = 0
 s_animation_interval = 150
 
+# score thresholds and corresponding bad object probabilities
+bad_prob_schedule = [
+    (0, 0.3),    # from score 0 → 30% bad
+    (20, 0.4),   # from 20 → 40% bad
+    (50, 0.5),   # from 30 → 50% bad
+    (80, 0.55),  # from 35 → 55% bad
+    (110, 0.6),   # from 40 → 60% bad
+    (130, 0.65),  # from 41 → 65% bad
+    (160, 0.7),   # from 45 → 70% bad
+]
+
+def get_bad_probability(score):
+    current_prob = 0.3  # default
+    for threshold, prob in bad_prob_schedule:
+        if score >= threshold:
+            current_prob = prob
+        else:
+            break
+    return current_prob
+
+# health
+health_width, health_height = 75, 75
+health_sprite = pygame.image.load("resources/starhealth.png").convert_alpha()
+health_sprite_resized = pygame.transform.scale(health_sprite, (50, 50))
+
 # clock
 clock = pygame.time.Clock()
 
 # show start screen
-show_start_screen(screen, WIDTH, HEIGHT)
+show_start_screen(screen, WIDTH, HEIGHT, high_score)
 
 # game reset
 def reset_game():
-    global player_health, falling_objects, spawn_timer, player_x, player_y
+    global player_health, falling_objects, spawn_timer, player_x, player_y, score
     player_health = MAX_HEALTH
     falling_objects.clear()
+    score = 0
     player_x, player_y = PLAYER_X, PLAYER_Y
 
 # main game loop
@@ -183,6 +248,14 @@ while running:
         
     screen.blit(current_bg_frame, (0, 0))
     
+    # draw player shadow
+    shadow_surface = pygame.Surface((shadow_width, shadow_height), pygame.SRCALPHA)
+    pygame.draw.ellipse(shadow_surface, shadow_colour, (0, 0, shadow_width, shadow_height))
+    shadow_x = player_x + 35
+    shadow_y = player_y + player_height + 5
+    
+    screen.blit(shadow_surface, (shadow_x, shadow_y))
+    
     # draw player based on state
     if player_state == "standing":
         p_current_frame = standing_frames[p_current_frame_index % len(standing_frames)]
@@ -202,9 +275,14 @@ while running:
         
     screen.blit(player_sprite_to_draw, (player_x, player_y))
     
-    # draw health
-    for i in range(player_health):
-        pygame.draw.rect(screen, heart_color, (10 + i * (heart_width + 5), 10, heart_width, heart_height))
+    current_heal_time = pygame.time.get_ticks()
+    player_sprite_to_draw = p_current_frame
+    if current_heal_time - last_healed_time < HEALED_FLASH_DURATION:
+        tinted_sprite = player_sprite_to_draw.copy()
+        tinted_sprite.fill((38, 215, 35, 100), special_flags=pygame.BLEND_RGBA_MULT)
+        player_sprite_to_draw = tinted_sprite
+        
+    screen.blit(player_sprite_to_draw, (player_x, player_y))
 
     # update star animation
     current_star_frame_time = pygame.time.get_ticks()
@@ -216,9 +294,11 @@ while running:
     spawn_timer += 1
     if spawn_timer > 60:
         spawn_timer = 0
+        bad_weight = get_bad_probability(score)
+        good_weight = 1 - bad_weight - 0.1  # keep star at 10%
         object_x = random.randint(0, WIDTH - object_width) # x value for where object should start; random
         object_type = random.choices(["bad", "good", "star"],
-                                    weights = [0.45, 0.45, 0.1],
+                                    weights = [bad_weight, good_weight, 0.1],
                                     k=1)[0]
         
         if object_type == "bad":
@@ -237,6 +317,7 @@ while running:
         # append adds a new object to falling_objects list
 
     # update falling objects
+    print(f"Object speed: {object_speed:.2f}")
     remaining_objects = []
     for object in falling_objects[:]:
         object["rect"].y += object_speed
@@ -263,23 +344,44 @@ while running:
         if player_rect.colliderect(object["rect"]):
             if object["type"] == "good":
                 print("Caught a good object!")
+                food_sound.play()
+                score += 1
+                object_speed = min(object_speed + math.sqrt(score) * speed_increment, max_speed)
             elif object["type"] == "bad":
                 print("Caught a bad object!")
+                hurt_sound.play()
                 player_health -= 1
                 last_hit_time = pygame.time.get_ticks()
                 if player_health <= 0:
                     print("Game Over!")
-                    show_game_over_screen(screen, WIDTH, HEIGHT)
+                    gameover_sound.play()
+                    new_high = score > high_score
+                    if new_high:
+                        high_score = save_high_score(score, high_score)
+                    show_game_over_screen(screen, WIDTH, HEIGHT, score, high_score, new_high)
+                    high_score = save_high_score(score, high_score)
                     reset_game()
             elif object["type"] == "star":
+                star_sound.play()
                 print("Caught a star!")
-                player_health = min(player_health + 1, MAX_HEALTH) # max health is 5
+                player_health = min(player_health + 1, MAX_HEALTH)
+                last_healed_time = pygame.time.get_ticks()
+                score += 5
         elif object["rect"].y > HEIGHT:
             pass
         else:
             remaining_objects.append(object)
     
     falling_objects = remaining_objects
+    
+    # draw health
+    for i in range(player_health):
+        screen.blit(health_sprite_resized, (10 + i * 55, 10))
+        
+    # render score
+    score_text = score_font.render(f"{score}", False, (255, 255, 255))
+    score_x, score_y = WIDTH - score_text.get_width()- 10, 10
+    screen.blit(score_text, (score_x, score_y))
 
     # update the display
     pygame.display.flip()
